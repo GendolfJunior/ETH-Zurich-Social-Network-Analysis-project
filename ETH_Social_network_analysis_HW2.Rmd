@@ -1,0 +1,1297 @@
+---
+title: "ETH Zürich - Social Network Analysis project"
+author: "Andriy Osemchuk"
+date: "May 8, 2023"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{css, echo=FALSE}
+h1 {
+  text-align: center;
+  color: blue;
+  font-weight: bold;
+}
+References
+```
+
+```{r load_libraries_and_data, echo=FALSE, results='hide', include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load all required libraries to be able running code chunks below
+if (!require("tidyverse")) {
+  install.packages("tidyverse")
+  library(tidyverse)
+}
+
+if (!require("readr")) {
+  install.packages("readr")
+  library(readr)
+}
+
+if (!require("sna")) {
+  install.packages("sna")
+  library(sna)
+}
+
+if (!require("igraph")) {
+  install.packages("igraph")
+  library(igraph)
+}
+
+if (!require("ggraph")) {
+  install.packages("ggraph")
+  library(ggraph)
+}
+
+if (!require("devtools")) {
+  install.packages("devtools")
+  library(devtools)
+}
+
+if (!require("r2symbols")) {
+  install.packages("r2symbols")
+  library(r2symbols)
+}
+
+symbol.setting(font.size=20,font.weight ="bold")
+
+# downloading datasets for project 
+if (!require("networkdata")) {
+  remotes::install_github("schochastics/networkdata")
+  library(networkdata)
+}
+
+```
+
+```{r , echo=FALSE, results='hide'}
+# check available datasets
+# data(package = "networkdata")
+```
+
+# Network Hypothesis
+
+## 1. Dataset overview
+
+### Choosing dataset
+
+```{r check_class_and_type, echo=FALSE, results='hide'}
+# typeof(Hijackers911.igraph)
+# class(Hijackers911.igraph)
+```
+
+We picked a dataset *covert_2* "9/11 Hijackers". 
+
+source: https://sites.google.com/site/ucinetsoftware/datasets/covert-networks/911-hijackers?authuser=0
+
+The network includes data about total 60 terrorists involved in the 9/11, 2001 tragic events. The network is divided on two sub-networks trusted prior contacts (19 hijackers) network and associates network (60 terrorists including hijackers). The data was gathered by the literature and journalistic review, and the ties are described by both personal relationships between terrorists and their affiliation to the flights.
+
+#### Dataset attributes description
+
+Following the link to the source data above, we get the following attributes data description
+
+DATA: 1-mode matrix 19 x 19 person by person of trusted prior contacts and 1-mode matrix 61 x 61 of other associates.
+
+Ties are undirected and binary. Relations are a mix of prior-contacts like trained together, lived together, financial transactions, at school with, on same flight.
+
+* **Network Strength**
+
+  + 1 = Trusted Prior Contacts
+
+  + 2 = Other Associates
+
+* **Ties**
+
+  + 1 = AA #11 WTC North
+
+  + 2 = AA #77 Pentagon
+
+  + 3 = UA #93 Pennsylvania
+
+  + 4 = UA #175 WTC South
+
+  + 5 = Other Associates
+
+* **Las Vegas Meeting**
+
+  + 1 = Attended
+  
+  + 0 = Did Not Attend
+
+#### Data loading
+
+```{r show_igraph_object}
+Hijackers911.igraph <- covert_2 # 9/11 Hijackers
+Hijackers911.igraph
+```
+
+Loading original data used to build igraph object.
+Loading and preview of 9/11 hijackers associates dataset.
+
+```{r load_dataset_9_11_HIJACKERS_ASSOCIATES, echo=FALSE}
+# if you are going to run it locally make sure the to find know your default path and place where your store the data
+# getwd()
+
+df_911_HIJACKERS_ASSOCIATES <- read_csv("./911_Hijackers/9_11_HIJACKERS_ASSOCIATES.csv") 
+head(df_911_HIJACKERS_ASSOCIATES, 1)
+```
+
+Loading and preview of 9/11 hijackers priorcontacts dataset.
+
+```{r load_dataset_9_11_HIJACKERS_PRIORCONTACTS, echo=FALSE}
+df_911_HIJACKERS_PRIORCONTACTS <- read_csv("./911_Hijackers/9_11_HIJACKERS_PRIORCONTACTS.csv") 
+head(df_911_HIJACKERS_PRIORCONTACTS, 1)
+```
+
+Loading and preview of 9/11 hijackers priorcontacts and associates attributes dataset.
+
+```{r load_dataset_9_11_HIJACKERS_ATTR, echo=FALSE}
+# if you are going to run it locally make sure the path below is the path to the data file on your laptop
+df_911_HIJACKERS_ATTR <- read_csv("./911_Hijackers/9_11_HIJACKERS_ATTR.csv") 
+head(df_911_HIJACKERS_ATTR, 1)
+```
+
+#### Data wrangling and data transformations 
+
+Transforming hijackers prior contacts data.
+
+```{r data_wrangling_1}
+# make the first column in the dataframe as a rowname
+df_911_HIJACKERS_PRIORCONTACTS <- as.data.frame(df_911_HIJACKERS_PRIORCONTACTS)
+colnames(df_911_HIJACKERS_PRIORCONTACTS)[1] <- "names"
+
+head(df_911_HIJACKERS_PRIORCONTACTS, 1)
+```
+
+Transforming hijackers associates contacts data.
+
+Duplicated records were spotted in the original dataset. 
+
+```{r check_duplicates_count}
+length(unique(df_911_HIJACKERS_ASSOCIATES[ , 1]))
+length((df_911_HIJACKERS_ASSOCIATES[ , 1]))
+```
+
+Search for the duplicated contact record. 
+
+```{r check_duplicates_frequency}
+n_occur <- data.frame(table(df_911_HIJACKERS_ASSOCIATES$...1))
+n_occur[n_occur$Freq > 1,]
+```
+
+Show rows with duplicated contact data. Since we have only one duplicate we can compare the data visually.
+
+```{r check_duplicates_record_associates}
+subset(df_911_HIJACKERS_ASSOCIATES, ...1 == "Tarek Maaroufi")[ , ]
+```
+
+Observing the records of the contact apparently they are identical. Hence, one record can be dropped. E.g. the record with a higher index value. 
+
+```{r dropping_duplicate}
+df_911_HIJACKERS_ASSOCIATES <- df_911_HIJACKERS_ASSOCIATES[-c(57), -c(57)] #drop matrix row and column
+
+subset(df_911_HIJACKERS_ASSOCIATES, ...1 == "Tarek Maaroufi")[ , ] #verify duplicate is dropped
+```
+
+Transforming hijackers associates contacts data.
+
+```{r data_wrangling_2}
+# make the first column in the dataframe as rowname
+df_911_HIJACKERS_ASSOCIATES <- as.data.frame(df_911_HIJACKERS_ASSOCIATES)
+colnames(df_911_HIJACKERS_ASSOCIATES)[1] <- "names"
+
+head(df_911_HIJACKERS_ASSOCIATES, 1)
+```
+
+Transforming hijackers attributes data.
+
+Checking for direct duplicates. 
+
+```{r check_duplicates_frequency_in_attributes}
+n_occur <- data.frame(table(df_911_HIJACKERS_ATTR$...1))
+n_occur[n_occur$Freq > 1,]
+```
+
+The query returned no duplicates. However, length of the attributes dataframe is off by exactly one record. The assunption is there is a typo in the first of last name of the hijacker. 
+
+Let's search by last name first. 
+
+```{r check_duplicates_record_attributes}
+duplicate_search_results <- base::grepl(pattern= "Maaroufi", x = df_911_HIJACKERS_ATTR$...1)
+
+duplicate_search_results_index <-  which(duplicate_search_results == TRUE)
+duplicate_search_results_index
+```
+
+Apparently, the last name is the same. We can check these records by the indices to see what is going on. 
+It looks like there might a typo in the First name *Tarek* vs *Takek*. 
+
+```{r}
+df_911_HIJACKERS_ATTR[duplicate_search_results_index, ]
+```
+
+After doing some google/bing search and using help of ChatGPT it looks like Tarek Maaroufi is our guy. Google, Bing and ChatGPT knows nothing about the other person.
+
+Hence, the record with the name Takek Maaroufi can be dropped.  
+
+```{r dropping_duplicate2}
+df_911_HIJACKERS_ATTR <- df_911_HIJACKERS_ATTR[-c(57), ]
+# verify duplicate is dropped and instead the index is assigned to the next person
+df_911_HIJACKERS_ATTR[duplicate_search_results_index, ] 
+```
+
+```{r data_wrangling_3}
+# make the first column in the dataframe as rowname
+df_911_HIJACKERS_ATTR <- as.data.frame(df_911_HIJACKERS_ATTR)
+colnames(df_911_HIJACKERS_ATTR)[1] <- "names"
+
+head(df_911_HIJACKERS_ATTR, 3)
+```
+
+### Calculate some network descriptive metrics
+
+#### Network size
+
+The networks size is calculated below.
+
+```{r}
+dim(df_911_HIJACKERS_PRIORCONTACTS)[1]
+```
+
+```{r}
+dim(df_911_HIJACKERS_ASSOCIATES)[1]
+```
+
+#### Network densities
+
+The networks density is calculated below.
+
+```{r network_density_priorcontacts}
+gden(df_911_HIJACKERS_PRIORCONTACTS[2:20])
+```
+
+```{r network_density_associates}
+gden(df_911_HIJACKERS_ASSOCIATES[2:61])
+```
+
+Network density is a measure of how many connections there are in a network compared to the total number of possible connections. It is calculated by dividing the number of edges by the number of possible edges. Density is used to understand how connected the network is compared to how connected it might be. It can also tell us how two networks with the same number of nodes and the same type of relationships are different.  
+
+When the density result is compared with networks we have already studied like school friendships. The network density results are low. Especially, in the associate's network. It means nodes are less connected to each other. The explanation for this fact could be hijackers trusted each other more than the network of associates. At the same time, the other implications are the desire to keep secrecy and making sure if one node is exposed there is a minimum risk of exposing others. On the contrary, in a school friendship network, there is more trust between nodes.  
+
+#### Average degree 
+
+Average in degree and out degree for HIJACKERS PRIORCONTACTS
+
+```{r averageInDegree_priorContacts}
+averageInDegree_priorContacts <- mean( colSums(df_911_HIJACKERS_PRIORCONTACTS[2:20]) )
+cat("Average indegree hijackers prior contacts is: ", averageInDegree_priorContacts)
+```
+
+```{r averageOutDegree_priorContacts}
+averageOutDegree_priorContacts <- mean( rowSums(df_911_HIJACKERS_PRIORCONTACTS[2:20]) )
+cat("Average outdegree hijackers prior contacts is: ", averageOutDegree_priorContacts)
+```
+
+Average in degree and out degree for HIJACKERS ASSOCIATES
+
+```{r averageOutDegree_associates}
+averageOutDegree_associates <- mean( rowSums(df_911_HIJACKERS_ASSOCIATES[2:61]), na.rm = TRUE )
+cat("Average outdegree hijackers hijackers associates is: ", averageOutDegree_associates)
+```
+
+```{r averageInDegree_associates}
+averageInDegree_associates <- mean( colSums(df_911_HIJACKERS_ASSOCIATES[2:61]), na.rm = TRUE )
+cat("Average indegree hijackers associates is: ", averageInDegree_associates)
+```
+
+As an alternative, we might consider also calculation of the average degree of individuals as a double-check:
+
+```{r averageInDegree_priorContacts_individuals}
+averageInDegree_priorContacts_individuals <-  sum(df_911_HIJACKERS_PRIORCONTACTS[2:20])/dim(df_911_HIJACKERS_PRIORCONTACTS[2:20])[1]
+cat("The Average degree of hijackers prior contacts individuals is: ", averageInDegree_priorContacts_individuals)
+```
+
+```{r averageInDegree_associates_individuals}
+averageInDegree_associates_individuals <- sum(df_911_HIJACKERS_ASSOCIATES[2:61], na.rm = T)/dim(df_911_HIJACKERS_ASSOCIATES)[1]
+cat("The Average degree of hijackers associates individuals is: ", averageInDegree_associates_individuals)
+```
+
+The average degree in both terrorist networks is also low in comparison to the school friendship network (4.88). It contributes to the idea of keeping secrecy and keeping at minimum exposure risks suggesting that each person is connected to about 2-3 others on average.  
+
+#### Correlation and distribution
+
+```{r}
+# the sum of rows is the outdegree, see Lecture 1
+outdegree_PRIORCONTACTS <- rowSums(df_911_HIJACKERS_PRIORCONTACTS[,2:20])
+# the sum of columns is the indegree, see Lecture 1
+indegree_PRIORCONTACTS <- colSums(df_911_HIJACKERS_PRIORCONTACTS[2:20]) 
+
+psych::pairs.panels(data.frame(outdegree_PRIORCONTACTS, indegree_PRIORCONTACTS))
+```
+
+```{r}
+outdegree_ASSOCIATES <- rowSums(df_911_HIJACKERS_ASSOCIATES[2:61]) # the sum of rows is the outdegree, see Lecture 1
+indegree_ASSOCIATES <- colSums(df_911_HIJACKERS_ASSOCIATES[2:61])# the sum of columns is the indegree, see Lecture 1
+
+psych::pairs.panels(data.frame(outdegree_ASSOCIATES, indegree_ASSOCIATES))
+```
+
+The correlation coefficient between in-degree and out-degree can be used to measure how well-connected a node is within a network. The correlation coefficients in both terrorist networks in comparison with the school network are much higher 57% and 44% against 14% in the school.  Implying a moderate to strong positive correlation between the number of incoming and outgoing ties. 
+
+#### Reciprocity ratio
+
+The reciprocity ratio is calculated below.
+
+```{r}
+cat("PRIORCONTACTS reciprocity ratio of dyadic ties which are symmetric: ", grecip(df_911_HIJACKERS_PRIORCONTACTS[2:20], measure = "dyadic")) 
+```
+
+```{r}
+cat("PRIORCONTACTS reciprocity ratio of mutuals to non-null dyads: ", grecip(df_911_HIJACKERS_PRIORCONTACTS[2:20], measure = "dyadic.nonnull"))
+```
+
+```{r}
+cat("ASSOCIATES reciprocity ratio of dyadic ties which are symmetric: ", grecip(df_911_HIJACKERS_ASSOCIATES[2:61], measure = "dyadic")) 
+```
+
+```{r}
+cat("ASSOCIATES reciprocity ratio of mutuals to non-null dyads: ", grecip(df_911_HIJACKERS_ASSOCIATES[2:61], measure = "dyadic.nonnull"))
+```
+
+The reciprocity ratio, a measure of mutual symmetric connections ("dyadic"), is ~ 96% in comparison with 82.3% in school network, signifying that the ties are reciprocal. Dyadic.nonnull returns the ratio of mutuals to non-null dyads which is also high 77.7% & 52% when in the school network it is 37%. 
+Hence, the implication could be there is possibly more trust within the terrorist like networks.   
+
+#### Centrality
+
+Centrality is a key feature in social network analysis - as the name suggests, it is about describing what are central nodes in the network.
+Degree of centrality is the sum of incoming/outgoing/total ties each individual has. 
+
+```{r data preparation and centrality calc for PRIORCONTACTS}
+# get only prior contacts from df_911_HIJACKERS_ATTR by joining hijackers prior contacts df
+df_911_HIJACKERS_ATTR_PRIORCONTACTS <- right_join(df_911_HIJACKERS_ATTR, df_911_HIJACKERS_PRIORCONTACTS, by= c("names" = "names") )
+
+# calculate centrality and assign to the new column
+df_911_HIJACKERS_ATTR_PRIORCONTACTS$centralityPrior <-
+  sna::degree(df_911_HIJACKERS_ATTR_PRIORCONTACTS[5:23], cmode = 'freeman')
+
+# rearrange columns order and select specific columns 
+df_911_HIJACKERS_ATTR_PRIORCONTACTS <-
+  df_911_HIJACKERS_ATTR_PRIORCONTACTS %>% select(c("names", "Network Strength", "Ties", "Las Vegas Meeting", "centralityPrior"))
+
+# sort df in descending order
+df_911_HIJACKERS_ATTR_PRIORCONTACTS %>% 
+  arrange(desc(centralityPrior)) %>% head(3)
+```
+
+```{r data preparation and centrality calc for ASSOCIATES}
+# get only associates from df_911_HIJACKERS_ATTR by joining hijackers prior contacts df
+df_911_HIJACKERS_ATTR_ASSOCIATES <- right_join(df_911_HIJACKERS_ATTR, df_911_HIJACKERS_ASSOCIATES, by= c("names" = "names") )
+
+# calculate centrality and assign to the new column
+df_911_HIJACKERS_ATTR_ASSOCIATES$centralityAssociates <- 
+  sna::degree(df_911_HIJACKERS_ATTR_ASSOCIATES[5:64], cmode = 'freeman')
+
+# rearrange columns order and select specific columns 
+df_911_HIJACKERS_ATTR_ASSOCIATES <-
+  df_911_HIJACKERS_ATTR_ASSOCIATES %>% select(c("names", "Network Strength", "Ties", "Las Vegas Meeting", "centralityAssociates"))
+
+# sort df in descending order
+df_911_HIJACKERS_ATTR_ASSOCIATES %>% 
+  arrange(desc(centralityAssociates)) %>% head(3)
+```
+
+The model shows the Essid Sami Ben Khemail being the central node in the network. Not suprisingly, when you google it, then it turns out he is a head of al-Qaeda. One more discovery is that Osama bin Laden is absent in the dataset at all. 
+
+```{r}
+# join back the calculated centrality column to the df_911_HIJACKERS_ATTR
+df_911_HIJACKERS_ATTR <- left_join(df_911_HIJACKERS_ATTR, df_911_HIJACKERS_ATTR_ASSOCIATES[ ,c("names", "centralityAssociates")], by= c("names" = "names") )
+df_911_HIJACKERS_ATTR <- left_join(df_911_HIJACKERS_ATTR, df_911_HIJACKERS_ATTR_PRIORCONTACTS[ ,c("names", "centralityPrior")], by= c("names" = "names") )
+
+head(df_911_HIJACKERS_ATTR)
+```
+
+### Visualizing 9_11_HIJACKERS_PRIORCONTACTS
+
+#### Create the layout of 9_11_HIJACKERS_PRIORCONTACTS  
+
+```{r build_igraph_PriorContacts}
+matrix_911_HIJACKERS_PRIORCONTACTS <-  as.matrix(df_911_HIJACKERS_PRIORCONTACTS[2:20]) 
+priorContacts.911.igraph <- graph_from_adjacency_matrix(matrix_911_HIJACKERS_PRIORCONTACTS,
+                          mode = "undirected", weighted = TRUE, diag = FALSE)
+```
+
+```{r join dataframes priorcontacts matrix and attributes}
+# join prior contacts matrix info with hijackers prior contacts attributes
+PRIORCONTACTS <- inner_join(df_911_HIJACKERS_PRIORCONTACTS, df_911_HIJACKERS_ATTR_PRIORCONTACTS, by= c("names" = "names") )
+```
+
+#### Vizualization HIJACKERS_PRIORCONTACTS central contact
+
+This is a visualization of the sub-network with Central node being colored as blue, size is the centrality degree, plotting based on Kamada-Kawai layout algorithm and direction (arrows). 
+
+```{r create_layout_prior_contacts2}
+set.seed(7)
+layout.graph.priorContacts2 <- create_layout(priorContacts.911.igraph, 
+                          layout = 'kk')    # doing the layout with kk
+```
+
+```{r visualize priorContacts2, warning=FALSE}
+# algorithm to determine the terrorist name with max centrality
+name_max <-  as.character( 
+  df_911_HIJACKERS_ATTR_PRIORCONTACTS %>% 
+  filter(centralityPrior == max(centralityPrior)) %>% 
+  select(c("names"))
+  )
+
+# plotting
+ggraph(layout.graph.priorContacts2) +
+  geom_node_point() +
+  geom_node_point(
+    aes(
+      colour = PRIORCONTACTS$names == name_max,
+      size = PRIORCONTACTS$centralityPrior), 
+    show.legend = FALSE
+  ) +
+  # geom_edge_link(alpha = .3, colour = "#6795f0") +
+  geom_node_text(
+    aes(label = name),
+    size = 3,
+    colour = '#617566',
+    nudge_y = 0.2, # adjust on y axis display of the terrorist name
+    show.legend = FALSE
+  )  +
+  geom_edge_arc(aes(), 
+                strength = 0.25, 
+                end_cap=circle(radius=1, unit = 'mm'),
+                arrow = arrow(length = unit(2, 'mm'), type="closed"),
+                alpha = .3, colour = "#6795f0"
+                ) +
+  ggtitle("9/11 Prior contacts network") +
+  labs(subtitle = "(a)") +
+  theme_graph(plot_margin = margin(10, 10, 10, 10))
+
+```
+
+According to the centrality index, as we can see on the plot the central node (broker) is **Nawaf Alhamzi**. 
+
+#### Vizualization HIJACKERS_PRIORCONTACTS flight details
+
+This is a visualization of the priorcontacts sub-network where nodes colored as blue are people who attended Las Vegas meeting, the centrality degree size is determined by the size of the node, and different shapes implies flight details if the node participated in the final events. 
+
+```{r create_layout_prior_contacts4}
+set.seed(7)
+layout.graph.priorContacts4 <- create_layout(priorContacts.911.igraph, 
+                          layout = 'kk')    # doing the layout with Kamada-Kawai
+```
+
+```{r visualize priorContacts4, warning=FALSE}
+# algorithm to determine the terrorist name with max centrality
+name_max <-  as.character( 
+  df_911_HIJACKERS_ATTR_PRIORCONTACTS %>% 
+  filter(centralityPrior == max(centralityPrior)) %>% 
+  select(c("names"))
+  )
+
+`Size Centrality` = PRIORCONTACTS$centralityPrior
+`Max Centrality` = PRIORCONTACTS$names == name_max
+`Las Vegas meeting` = as.factor(PRIORCONTACTS$`Las Vegas Meeting`)
+
+# plotting
+ggraph(layout.graph.priorContacts4) +
+  geom_node_point(aes(#size = `Size Centrality`, 
+                      colour= `Las Vegas meeting`)
+  ) +
+  geom_node_point(
+    aes(
+      # colour = `Max Centrality`,
+      shape= as.factor(PRIORCONTACTS$Ties)
+      ),
+    size=3
+  ) +
+  geom_edge_link(alpha = .3, colour = "#6795f0") +
+  geom_node_text(
+    aes(label = name),
+    colour = '#617566',
+    nudge_y = 0.2, # adjust on y axis display of the terrorist name
+    show.legend = FALSE
+  )  +
+  scale_shape_manual(name= "Ties", 
+                     values= c(1, 2, 3, 4, 5), 
+                     labels= c("1 = AA #11 WTC North", 
+                               "2 = AA #77 Pentagon", 
+                               "3 = UA #93 Pennsylvania", 
+                               "4 = UA #175 WTC South", 
+                               "5 = Other Associates")
+  ) +
+  # scale_size_manual(name="Centrality size", values = as.factor(PRIORCONTACTS$centralityPrior)) +
+    # scale_size_manual(name="Centrality size", breaks = waiver(), values = as.factor(PRIORCONTACTS$centralityPrior)) +
+  # labs(color = PRIORCONTACTS$names, size = PRIORCONTACTS$centralityPrior) +
+  ggtitle("9/11 Prior contacts network") +
+  labs(subtitle = "(b)") + 
+  theme_graph(plot_margin = margin(10, 10, 10, 10))
+
+```
+
+The sub-network broker **Nawaf Alhamzi** determined on the previous plot also participated in the Las Vegas event which from our point of view confirms his leadership position in the network.   
+
+### Visualizing 9_11_HIJACKERS_ASSOCIATES
+
+#### Create the layout of 9_11_HIJACKERS_ASSOCIATES  
+
+```{r build_igraph_associateContacts}
+# replace NA with 0. All NAs are selfreferences 
+df_911_HIJACKERS_ASSOCIATES <- df_911_HIJACKERS_ASSOCIATES %>% replace(is.na(.), 0) #
+# convert to matrix
+matrix_911_HIJACKERS_ASSOCIATES <- as.matrix(df_911_HIJACKERS_ASSOCIATES[2:61])
+# create ighraph object
+associates.911.igraph <- graph_from_adjacency_matrix(matrix_911_HIJACKERS_ASSOCIATES, mode = "undirected", weighted = TRUE, diag = FALSE)
+```
+
+```{r join dataframes associates matrix and attributes}
+# join prior contacts matrix info with hijackers prior contacts attributes
+ASSOCIATES <- inner_join(df_911_HIJACKERS_ASSOCIATES, df_911_HIJACKERS_ATTR_ASSOCIATES, by= c("names" = "names") )
+```
+
+#### Vizualization HIJACKERS_ASSOCIATES
+
+This is a visualization of the network with Central node being colored as blue, size is the centrality degree, plotting based on Kamada-Kawai layout algorithm and direction (arrows). 
+
+```{r create_layout_associates_contacts1}
+set.seed(7)
+layout.graph.associateContacts1 <- create_layout(associates.911.igraph, 
+                          layout = 'kk')    # doing the layout with kk
+```
+
+```{r visualize associateContacts1, warning=FALSE}
+# algorithm to determine the terrorist name with max centrality
+name_max <-  as.character( 
+  df_911_HIJACKERS_ATTR_ASSOCIATES %>% 
+  filter(centralityAssociates == max(centralityAssociates)) %>% 
+  select(c("names"))
+  )
+
+# plotting
+ggraph(layout.graph.associateContacts1) +
+  geom_node_point() +
+  geom_node_point(
+    aes(
+      colour = ASSOCIATES$names == name_max,
+      size = ASSOCIATES$centralityAssociates), 
+    show.legend = FALSE
+  ) +
+  # geom_edge_link(alpha = .3, colour = "#6795f0") +
+  geom_node_text(
+    aes(label = name),
+    size = 3,
+    colour = '#617566',
+    nudge_y = 0.2, # adjust on y axis display of the terrorist name
+    show.legend = FALSE
+  )  +
+  geom_edge_arc(aes(), 
+                strength = 0.25, 
+                end_cap=circle(radius=1, unit = 'mm'),
+                arrow = arrow(length = unit(2, 'mm'), type="closed"),
+                alpha = .3, colour = "#6795f0"
+                ) +
+  ggtitle("9/11 Associates network") +
+  labs(subtitle = "(c)") +
+  theme_graph(plot_margin = margin(10, 10, 10, 10))
+
+```
+
+#### Vizualization HIJACKERS_ASSOCIATES flight details
+
+This is a visualization of the network with Central node being colored as blue, size is the centrality degree, plotting based on Kamada-Kawai layout algorithm. 
+
+```{r create_layout_associate_contacts0}
+set.seed(7)
+layout.graph.associateContacts2 <- create_layout(associates.911.igraph, 
+                          layout = 'kk')    # doing the layout with Kamada-Kawai
+```
+
+
+```{r visualize priorContacts0, warning=FALSE}
+# algorithm to determine the terrorist name with max centrality
+name_max <-  as.character( 
+  df_911_HIJACKERS_ATTR_ASSOCIATES %>% 
+  filter(centralityAssociates == max(centralityAssociates)) %>% 
+  select(c("names"))
+  )
+
+`Size Centrality` = ASSOCIATES$centralityAssociates
+`Max Centrality` = ASSOCIATES$names == name_max
+`Las Vegas meeting` = as.factor(ASSOCIATES$`Las Vegas Meeting`)
+
+# plotting
+ggraph(layout.graph.associateContacts2) +
+  geom_node_point(aes(#size = `Size Centrality`, 
+                      colour= `Las Vegas meeting`),
+                  show.legend=FALSE
+  ) +
+  geom_node_point(
+    aes(
+      # colour = `Max Centrality`,
+      shape= as.factor(ASSOCIATES$Ties) 
+      ),
+    show.legend=FALSE,
+    size=3
+  ) +
+  geom_edge_link(alpha = .3, colour = "#6795f0") +
+  geom_node_text(
+    aes(label = name),
+    size = 2,
+    colour = '#617566',
+    nudge_y = 0.3, # adjust on y axis display of the terrorist name
+    show.legend = FALSE
+  )  +
+  ggtitle("9/11 Associates network") + 
+  labs(subtitle = "(d)") +
+  theme_graph(plot_margin = margin(10, 10, 10, 10))
+
+```
+
+**Plot legend**
+
+```{r, echo=FALSE}
+symbol(467, font.size = 30)
+```
+circle = 1 AA #11 WTC North
+
+```{r, echo=FALSE}
+symbol(949, font.size = 20)
+```
+Triangle = 2 AA #77 Pentagon
+
+```{r, echo=FALSE}
+symbol(1069)
+```
+Square = 3 UA #93 Pennsylvania
+
+```{r, echo=FALSE}
+symbol(123)
+```
+Plus = 4 UA #175 WTC South
+
+```{r, echo=FALSE}
+symbol(1096, font.size = 15)
+```
+Square with cross = 5 Other Associates
+
+
+Terrorist attacks have been a relevant and current topic from the Ukrainian perspective since the full-scale Russian invasion. SNA can help identify the communication patterns of terrorists; Ukrainian law authorities can better understand who is involved, which can be used to disrupt plots and apprehend perpetrators preemptively in wartime in Ukraine.
+
+## 2. Social Network theories
+
+## Answer
+
+### (a)
+Theory: Trustworthiness (Trust networks) as a part of Social Capital Theory.
+Hypothesis: members’ level of trust is higher and more stable within cohesive subgroups/cliques/triads than between leaders and other members or than the level of trust in general. Here additional longitudinal data may be applied using dynamic network analysis.
+
+Having studied terrorist organizations’ structure, Malcolm Sparrow suggests that one of the main network features of criminal networks is a permanent dynamic of fuzzy boundaries and completeness (1991). So, it’s more relevant to learn not the general number of ties (and their strengths) between two or more individuals but to look at the “point” interaction among triads, especially cohesive ones and to study a local trust. We suppose that since the 9/11 network is never static^[Uncloaking Terrorist Networks by Veldis E. Krebs, access: https://firstmonday.org/ojs/index.php/fm/article/view/941/863], it’s difficult to observe a high level of permanent trust between leaders and other members.
+
+The theory of trustworthiness is also worth applying based on the following:
+* Mark Sageman (2004) found that planning and participating in attacks were mainly based on strong social ties within small “cells”: most were friends or relatives in the past, which allows studying a strong sense of community, but precisely with small task activities.
+* Friedkin (1983) found a huge distance between pairs and triads even in the same flight-attack team. It’s explained by the strategy to minimize damage to the whole network if even one member is compromised. 
+
+*This hypothesis could be tested by calculating network measures as per 1(a) across similar terrorist like networks. E.g. "Global Suicide Attacks" (covert_19), "Madrid Train Bombing 2004" (covert_30), etc.*
+
+The other tests we can perform for hypothesis testing are: 
+
+* Univariate Conditional Uniform Graph Tests (https://rdrr.io/cran/sna/man/cug.test.html)
+
+* Quadratic Assignment Procedure (QAP) Hypothesis Tests for Graph-Level Statistics (https://rdrr.io/cran/sna/man/qaptest.html)
+
+Both tests take as an input graph matrix object and the function you'd like to use for testing. E.g.: 
+
+* *gtrans()* - Compute Transitivity of an Input Graph or Graph Stack (https://rdrr.io/cran/sna/man/gtrans.html)
+
+* *connectedness()* - Compute Graph Connectedness Scores (https://rdrr.io/cran/sna/man/connectedness.html)
+
+* *degree()* - Compute the Degree Centrality Scores of Network Positions (https://rdrr.io/cran/sna/man/degree.html)
+
+### (b)
+Theory: Structural holes, Burt
+Hypothesis: Though having authority in the terrorist community, not all leaders as brokers have much influence over the whole network
+To have a successful brokerage position, an actor has to “close” the structural hole between the alters or subgroups using weak direct ties. Indeed, 9/11 leaders have power and autonomy in innovations and setting the ideology. However, because of the huge average distance between actors and many separate cohesive subgroups, leaders such as Nawaf Alhazmi, Ziad Jarrah or Essid Sami Ben Khemail, etc., rather play the role of bridging entire communities but not keeping a permanent influence. On the other hand, such leader as Mohamed Atta proves the effectiveness of the brokerage position by having the biggest degrees of closeness and betweenness, allowing them to have control and access to the main resources. (see the plot 3 and 4 )
+
+From the 9/11 Associates network visualization, each leader has a monopoly over local communities rather than over the whole network. Nasrullah Memon describes it as a “free scale network” created spontaneously, without a particular organizational plan, required hierarchy or central authority (2006).
+
+#### Perform a Gould-Fernandez Brokerage Analysis
+
+##### Brokerage Analysis prior contacts
+
+```{r Brokerage Analysis prior}
+# make terrorist names as rownames of the matrix. So, the output statistics is more informative 
+rownames(matrix_911_HIJACKERS_PRIORCONTACTS) <- df_911_HIJACKERS_ATTR_PRIORCONTACTS$names
+
+# Perform a Gould-Fernandez Brokerage Analysis 
+# attribute "Ties" is used as a class (cl) parameter
+priorContacts_brokerage <- brokerage(g = matrix_911_HIJACKERS_PRIORCONTACTS, cl=df_911_HIJACKERS_ATTR_PRIORCONTACTS[ , 3])
+summary(priorContacts_brokerage)
+```
+
+##### Brokerage Analysis associates
+
+```{r Brokerage Analysis associates}
+# make terrorist names as rownames of the matrix. So, the output statistics is more informative 
+rownames(matrix_911_HIJACKERS_ASSOCIATES) <- df_911_HIJACKERS_ATTR_ASSOCIATES$names
+
+# Perform a Gould-Fernandez Brokerage Analysis
+# attribute "Ties" is used as a class (cl) parameter
+associates_brokerage <- brokerage(g = matrix_911_HIJACKERS_ASSOCIATES, cl=df_911_HIJACKERS_ATTR_ASSOCIATES[ , 3]) 
+summary(associates_brokerage)
+```
+
+Having conducted the Gould-Fernandez Brokerage Analysis in the prior-trusted contacts and associates, we could see that statistically there is one type of predominant brokerage with a significant level: 
+
+* “w_O”: Itinerant broker role, the kind of broker who mediates ties between two actors in a single group, where he is not a member. Two-path structure: A -> B -> A
+
+It says a lot about the leader’s out-degree centrality. Regarding the associates’ network, there is also a dominant “w_O” brokerage. The second dominant brokerage is the “b_O” or Liaison role, which means that the actors connect individuals from different groups, neither of which is the group to which they belong. Two-path structure: A -> B -> C
+
+<center><h4>References</h4></center>
+
+* Sparrow, M. K. (1991). The application of network analysis to criminal intelligence: An assessment of the prospects. Social networks, 13(3), 251-274.
+* Bousquet, A. (2012). Complexity theory and the war on terror: understanding the self-organizing dynamics of leaderless jihad. Journal of International Relations and Development, 15, 345-369.
+* Friedkin, N. E. (1983). Horizons of observability and limits of informal control in organizations. Social Forces, 62(1), 54-77.
+* Memon, N., & Larsen, H. L. (2006). Investigative data mining toolkit: a software prototype for visualizing, analyzing and destabilizing terrorist networks. AALBORG UNIVERSITETSCENTER (DENMARK).
+
+# Data Analysis 
+
+## 1. Cluster detection
+Apply one community detection algorithm to the dataset you have chosen, provide justifications for why you choose this algorithm, and interpret your findings. What are patterns you find in this network? What are the possible explanations for those patterns?
+(max. 200 words)
+
+## Answer
+
+### Community structure via greedy optimization of modularity
+
+This algorithm works for undirected networks which is the case for 9/11 network. 
+
+```{r}
+PRIORCONTACTS.fg <-  cluster_fast_greedy(priorContacts.911.igraph)
+PRIORCONTACTS.fg
+```
+
+```{r}
+ASSOCIATES.fg <-  cluster_fast_greedy(associates.911.igraph)
+ASSOCIATES.fg
+```
+
+How many communities were identified by the fast greedy algorithm?
+
+```{r}
+length(PRIORCONTACTS.fg)
+```
+
+```{r}
+length(ASSOCIATES.fg)
+```
+
+There were 4 communities identified in the prior contacts network which is inline with 4 planes crashed by the terrorist group. In the associate's network, the algorithm detected 5 communities which is inline with 4 planes + fifth are the other associates. 
+
+What are their sizes?
+
+```{r}
+sizes(PRIORCONTACTS.fg) 
+```
+
+```{r}
+sizes(ASSOCIATES.fg) 
+```
+
+Sizes of groups for prior contacts are more less inline with how they board the planes. As for associates network it is very different. 
+
+Who belongs to which community?
+
+```{r}
+PRIORCONTACTS_member.fg <-  membership(PRIORCONTACTS.fg) 
+PRIORCONTACTS_member.fg
+```
+
+```{r}
+ASSOCIATES_member.fg <-  membership(ASSOCIATES.fg) 
+ASSOCIATES_member.fg
+```
+
+What is the modularity of the network? 
+
+```{r}
+modularity(PRIORCONTACTS.fg)
+```
+
+```{r}
+modularity(ASSOCIATES.fg)
+```
+
+Modularity is a measure of the structure of networks or graphs which measures the strength of division of a network into modules (also called groups, clusters or communities). Networks with high modularity have dense connections between the nodes within modules but sparse connections between nodes in different modules. 
+
+Plotting the results of fast and greedy clustering for prior contacts network. 
+
+```{r, warning=FALSE}
+set.seed(3)
+g <- ggraph(priorContacts.911.igraph, layout = 'kk') +
+  geom_edge_link(color = "gray89") +
+  geom_node_text(
+    aes(label = name),
+    size = 3,
+    colour = '#617566',
+    nudge_y = 0.2, # adjust on y axis display of the terrorist name
+    show.legend = FALSE
+  ) +
+  theme_graph()
+
+Cluster = as.factor(PRIORCONTACTS_member.fg)
+
+g + 
+  geom_node_point(aes(color = Cluster), size = 3, show.legend = TRUE) +
+  ggtitle("9/11 Prior contacts fast and greedy clustering") +
+  labs(subtitle = "(e)")  
+```
+
+Now, lets see how the flight details maps on the clusters. 
+
+```{r , warning=FALSE}
+g + 
+  geom_node_point(aes(shape = as.factor(PRIORCONTACTS$Ties) ),  size=2) +
+  geom_node_point(aes(color = Cluster ), size = 4,  alpha=0.4) +
+  scale_shape_manual(name= "Ties", 
+                     values= c(1, 2, 3, 4), 
+                     labels= c("1 = AA #11 WTC North", 
+                               "2 = AA #77 Pentagon", 
+                               "3 = UA #93 Pennsylvania", 
+                               "4 = UA #175 WTC South") ) +
+  ggtitle("9/11 Prior contacts fast and greedy clustering") +
+  labs(subtitle = "(f)")
+  
+```
+
+From the above plot the algorithm catches one cluster (blue) which matches exactly the terrorist crew who crashed AA#77 on Pentagon.  It looks like the reason why the fast and greedy was able to do so because Nawaf Alhazmi is the only broker node connecting his team to others. 
+
+Plotting the results of fast and greedy clustering for associates network. 
+
+```{r , warning=FALSE}
+set.seed(3)
+ga <- ggraph(associates.911.igraph, layout = 'kk') +
+  geom_edge_link(color = "gray89") +
+  geom_node_text(
+    aes(label = name),
+    size = 3,
+    colour = '#617566',
+    nudge_y = 0.2, # adjust on y axis display of the terrorist name
+    show.legend = FALSE
+  ) +
+  theme_graph()
+
+ga + 
+  geom_node_point(aes(color = as.factor(ASSOCIATES_member.fg)), size = 3) +
+  scale_color_manual(label= c(1,2,3,4,5), values = c("red", "#7cba69", "#6984ba", "purple", "#b3b300"), name= "Cluster") +
+  ggtitle("9/11 Associates fast and greedy clustering") +
+  labs(subtitle = "(g)")  
+```
+
+Now, lets see how the flight details maps on the associates' clusters. 
+
+```{r , warning=FALSE}
+ga + 
+  geom_node_point(aes(shape = as.factor(ASSOCIATES$Ties) ),  size=2) +
+  geom_node_point(aes(color = as.factor(ASSOCIATES_member.fg) ), size = 4,  alpha=0.4) +
+  scale_shape_manual(name= "Ties", 
+                     values= c(1, 2, 3, 4, 5), 
+                     labels= c("1 = AA #11 WTC North", 
+                               "2 = AA #77 Pentagon", 
+                               "3 = UA #93 Pennsylvania", 
+                               "4 = UA #175 WTC South",
+                               "5 = Other Associates") ) +
+  scale_color_manual(label= c(1,2,3,4,5), values = c("red", "#7cba69", "#6984ba", "purple", "#b3b300"), name= "Cluster") +
+  
+  ggtitle("9/11 Associates fast and greedy clustering") +
+  labs(subtitle = "(f)")
+  
+```
+
+### Community structure via short random walks
+
+```{r}
+PRIORCONTACTS.wt <-  cluster_walktrap(priorContacts.911.igraph)
+PRIORCONTACTS.wt
+```
+
+```{r}
+ASSOCIATES.wt <-  cluster_walktrap(associates.911.igraph)
+ASSOCIATES.wt
+```
+
+How many communities were identified by the fast greedy algorithm?
+
+```{r}
+length(PRIORCONTACTS.wt)
+```
+
+```{r}
+length(ASSOCIATES.wt)
+```
+
+There were 4 communities identified in the prior contacts network and 5 in the associates network which is the same case as with the fast and greedy algorithm. 
+
+What are their sizes?
+
+```{r}
+sizes(PRIORCONTACTS.wt) 
+```
+
+```{r}
+sizes(ASSOCIATES.wt) 
+```
+
+Sizes of groups for prior contacts and associates look less balanced. The biggest group in prior contacts network with fast and greedy was 6 members, this time it is 7. In associates network it was 13 and now it is 17.  
+
+Who belongs to which community?
+
+```{r}
+PRIORCONTACTS_member.wt <-  membership(PRIORCONTACTS.wt) 
+PRIORCONTACTS_member.wt
+```
+
+```{r}
+ASSOCIATES_member.wt <-  membership(ASSOCIATES.wt) 
+ASSOCIATES_member.wt
+```
+
+What is the modularity of the network? 
+
+```{r}
+modularity(PRIORCONTACTS.wt)
+```
+
+```{r}
+modularity(ASSOCIATES.wt)
+```
+
+Modularity scores are slightly lower than in fast and greedy algorithm. 
+
+Plotting the results of fast and greedy clustering for prior contacts network. 
+
+```{r, warning=FALSE}
+set.seed(3)
+gwt <- ggraph(priorContacts.911.igraph, layout = 'kk') +
+  geom_edge_link(color = "gray89") +
+  geom_node_text(
+    aes(label = name),
+    size = 3,
+    colour = '#617566',
+    nudge_y = 0.2, # adjust on y axis display of the terrorist name
+    show.legend = FALSE
+  ) +
+  theme_graph()
+
+Cluster = as.factor(PRIORCONTACTS_member.wt)
+
+gwt + 
+  geom_node_point(aes(color = Cluster), size = 3, show.legend = TRUE) +
+  ggtitle("9/11 Prior contacts short random walk clustering") +
+  labs(subtitle = "(g)")  
+```
+
+Now, lets see how the flight details maps on the clusters. 
+
+```{r , warning=FALSE}
+gwt + 
+  geom_node_point(aes(shape = as.factor(PRIORCONTACTS$Ties) ),  size=2) +
+  geom_node_point(aes(color = Cluster ), size = 4,  alpha=0.4) +
+  scale_shape_manual(name= "Ties", 
+                     values= c(1, 2, 3, 4), 
+                     labels= c("1 = AA #11 WTC North", 
+                               "2 = AA #77 Pentagon", 
+                               "3 = UA #93 Pennsylvania", 
+                               "4 = UA #175 WTC South") ) +
+  ggtitle("9/11 Prior contacts short random walk clustering") +
+  labs(subtitle = "(h)")
+  
+```
+
+In comparison with the previous algorithm it doesn't capture any team who boarded a plane. 
+
+Plotting the results of fast and greedy clustering for associates network. 
+
+```{r , warning=FALSE}
+set.seed(3)
+gwta <- ggraph(associates.911.igraph, layout = 'kk') +
+  geom_edge_link(color = "gray89") +
+  geom_node_text(
+    aes(label = name),
+    size = 3,
+    colour = '#617566',
+    nudge_y = 0.2, # adjust on y axis display of the terrorist name
+    show.legend = FALSE
+  ) +
+  theme_graph()
+
+gwta + 
+  geom_node_point(aes(color = as.factor(ASSOCIATES_member.wt)), size = 3) +
+  scale_color_manual(label= c(1,2,3,4,5), values = c("red", "#7cba69", "#6984ba", "purple", "#b3b300"), name= "Cluster") +
+  ggtitle("9/11 Associates short random walk clustering") +
+  labs(subtitle = "(i)")  
+```
+
+Now, lets see how the flight details maps on the associates' clusters. 
+
+```{r , warning=FALSE}
+gwta + 
+  geom_node_point(aes(shape = as.factor(ASSOCIATES$Ties) ),  size=2) +
+  geom_node_point(aes(color = as.factor(ASSOCIATES_member.wt) ), size = 4,  alpha=0.4) +
+  scale_shape_manual(name= "Ties", 
+                     values= c(1, 2, 3, 4, 5), 
+                     labels= c("1 = AA #11 WTC North", 
+                               "2 = AA #77 Pentagon", 
+                               "3 = UA #93 Pennsylvania", 
+                               "4 = UA #175 WTC South",
+                               "5 = Other Associates") ) +
+  scale_color_manual(label= c(1,2,3,4,5), values = c("red", "#7cba69", "#6984ba", "purple", "#b3b300"), name= "Cluster") +
+  
+  ggtitle("9/11 Associates short random walk clustering") +
+  labs(subtitle = "(j)")
+  
+```
+
+## 2. Uniform tests vs Erdos-Renyi model of the same (expected) density
+
+## Answer
+
+#### Test transitivity against size, density, and the dyad census
+
+##### Prior contacts Test transitivity
+
+```{r test_transitivity_prior}
+cug.test.gtrans.priorContacts.size <-  cug.test(dat=matrix_911_HIJACKERS_PRIORCONTACTS, gtrans, cmode="size", mode = "graph")
+cug.test.gtrans.priorContacts.size
+
+cug.test.gtrans.priorContacts.edges <- cug.test(dat=matrix_911_HIJACKERS_PRIORCONTACTS, gtrans, cmode="edges", mode = "graph")
+cug.test.gtrans.priorContacts.edges
+
+cug.test.gtrans.priorContacts.dyad.census <- cug.test(dat=matrix_911_HIJACKERS_PRIORCONTACTS, gtrans, cmode="dyad.census", mode = "graph")
+cug.test.gtrans.priorContacts.dyad.census
+```
+
+##### Associates Test transitivity
+
+```{r test_transitivity_associates}
+cug.test.gtrans.associates.size <-  cug.test(dat=matrix_911_HIJACKERS_ASSOCIATES, gtrans, cmode="size", mode = "graph")
+cug.test.gtrans.associates.size
+
+cug.test.gtrans.associates.edges <-cug.test(dat=matrix_911_HIJACKERS_ASSOCIATES, gtrans, cmode="edges", mode = "graph")
+cug.test.gtrans.associates.edges
+
+cug.test.gtrans.associates.dyad.census <- cug.test(dat=matrix_911_HIJACKERS_ASSOCIATES, gtrans, cmode="dyad.census", mode = "graph")
+cug.test.gtrans.associates.dyad.census
+```
+
+#### Test Krackhardt connectedness scores against size, density, and the dyad census 
+
+##### Test Krackhardt connectedness for prior contacts
+
+```{r Krackhardt_connectedness_prior_contacts}
+#Test  Krackhardt connectedness scores against size, density, and the dyad census
+cug.test.connectedness.priorContacts.size <-  cug.test(dat=matrix_911_HIJACKERS_PRIORCONTACTS, sna::connectedness, cmode="size", mode = "graph")
+cug.test.connectedness.priorContacts.size
+
+cug.test.connectedness.priorContacts.edges <- cug.test(dat=matrix_911_HIJACKERS_PRIORCONTACTS, sna::connectedness, cmode="edges", mode = "graph")
+cug.test.connectedness.priorContacts.edges
+
+cug.test.connectedness.priorContacts.dyad.census <- cug.test(dat=matrix_911_HIJACKERS_PRIORCONTACTS, sna::connectedness, cmode="dyad.census", mode = "graph")
+cug.test.connectedness.priorContacts.dyad.census
+```
+
+##### Test Krackhardt connectedness for associates
+
+```{r Krackhardt_connectedness_associates}
+#Test  Krackhardt connectedness scores against size, density, and the dyad census
+cug.test.connectedness.associates.size <-  cug.test(dat=matrix_911_HIJACKERS_ASSOCIATES, sna::connectedness, cmode="size", mode = "graph")
+cug.test.connectedness.associates.size
+
+cug.test.connectedness.associates.edges <- cug.test(dat=matrix_911_HIJACKERS_ASSOCIATES, sna::connectedness, cmode="edges", mode = "graph")
+cug.test.connectedness.associates.edges
+
+cug.test.connectedness.associates.dyad.census <- cug.test(dat=matrix_911_HIJACKERS_ASSOCIATES, sna::connectedness, cmode="dyad.census", mode = "graph")
+cug.test.connectedness.associates.dyad.census
+```
+
+#### Test degree scores against size, density, and the dyad census 
+
+##### Test degree scores for prior contacts  
+
+```{r Test_degree_scores_prior_contacts, warning=FALSE}
+cug.test.degree.priorContacts.size <-  cug.test(dat=matrix_911_HIJACKERS_PRIORCONTACTS, FUN = sna::degree, cmode="size", mode = "graph")
+cug.test.degree.priorContacts.size 
+
+cug.test.degree.priorContacts.edges <-  cug.test(dat=matrix_911_HIJACKERS_PRIORCONTACTS, FUN = sna::degree, cmode="edges", mode = "graph")
+cug.test.degree.priorContacts.edges
+
+cug.test.degree.priorContacts.dyad.census <- cug.test(dat=matrix_911_HIJACKERS_PRIORCONTACTS, FUN = sna::degree, cmode="dyad.census", mode = "graph")
+cug.test.degree.priorContacts.dyad.census
+```
+
+##### Test degree scores for associates
+
+```{r Test_degree_scores_associates, warning=FALSE}
+cug.test.degree.associates.size <-  cug.test(dat=matrix_911_HIJACKERS_ASSOCIATES, FUN = sna::degree, cmode="size", mode = "graph")
+cug.test.degree.associates.size 
+
+cug.test.degree.associates.edges <-  cug.test(dat=matrix_911_HIJACKERS_ASSOCIATES, FUN = sna::degree, cmode="edges", mode = "graph")
+cug.test.degree.associates.edges
+
+cug.test.degree.associates.dyad.census <- cug.test(dat=matrix_911_HIJACKERS_ASSOCIATES, FUN = sna::degree, cmode="dyad.census", mode = "graph")
+cug.test.degree.associates.dyad.census
+```
+
+#### Conditional Uniform Graph (CUG) Hypothesis Tests for Graph-Level Indices
+
+Generate Erdos-Renyi random graph with the same number of nodes and expected density as the prior contacts network.
+
+To generate the random graph it should have the fixed parameter of the density from the original dataset. Calculate the expected density for the prior contacts network.
+
+```{r}
+d_prior = gden(matrix_911_HIJACKERS_PRIORCONTACTS)
+d_prior
+```
+
+```{r}
+set.seed(7)
+er_prior = erdos.renyi.game(n = vcount(priorContacts.911.igraph), p = d_prior, type = "gnp")
+er_adj_prior = get.adjacency(er_prior)
+erMatr_prior = as.matrix(er_adj_prior)
+```
+
+```{r}
+array_911_HIJACKERS_PRIORCONTACTS <-  as.array(matrix_911_HIJACKERS_PRIORCONTACTS)
+# array_911_HIJACKERS_PRIORCONTACTS
+```
+
+```{r qap_array_prior}
+qap_prior <- array( dim = c(5,19,19) ) # creating an array with dimensions and values taken from matrices
+qap_prior[1,,] <- df_911_HIJACKERS_ATTR_PRIORCONTACTS$Ties
+qap_prior[2,,] <- df_911_HIJACKERS_ATTR_PRIORCONTACTS$`Las Vegas Meeting`
+qap_prior[3,,] <- df_911_HIJACKERS_ATTR_PRIORCONTACTS$centralityPrior
+qap_prior[4,,] <- array_911_HIJACKERS_PRIORCONTACTS # connections/ties between terrorists. matrix with ties converted to array 
+qap_prior[5,,] <- erMatr_prior                            # generated Erdos-Renyi random graph
+```
+
+$H_0$ - there is no difference in the connections distribution between our network and random network generated by Erdos-Renyi random graph
+$H_1$ - there is difference in the connections distribution between our network and random network generated by Erdos-Renyi random graph
+
+```{r}
+set.seed(8)
+cugtest(dat = qap_prior, FUN = sna::gcor, g1=4, g2=5, cmode = "density", gmode = "graph")
+```
+
+The p-value is greater than the significance level (normally accepted as 0.05), then we don't have sufficient evidence to reject null hypothesis and conclude 
+that the observed network has a different density distribution than the random graph.
+
+Generate Erdos-Renyi random graph with the same number of nodes and expected density as the associates network.
+
+```{r}
+d_assoc = gden(matrix_911_HIJACKERS_ASSOCIATES)
+d_assoc
+```
+
+```{r}
+set.seed(7)
+er_assoc = erdos.renyi.game(n = vcount(associates.911.igraph), p = d_assoc, type = "gnp")
+er_adj_assoc = get.adjacency(er_assoc)
+erMatr_assoc = as.matrix(er_adj_assoc)
+```
+
+```{r}
+array_911_HIJACKERS_ASSOCIATES <-  as.array(matrix_911_HIJACKERS_ASSOCIATES)
+# array_911_HIJACKERS_ASSOCIATES
+```
+
+```{r qap_array_assoc}
+qap_assoc <- array( dim = c(5,60,60) ) # creating an array with dimensions and values taken from matrices
+qap_assoc[1,,] <- df_911_HIJACKERS_ATTR_ASSOCIATES$Ties
+qap_assoc[2,,] <- df_911_HIJACKERS_ATTR_ASSOCIATES$`Las Vegas Meeting`
+qap_assoc[3,,] <- df_911_HIJACKERS_ATTR_ASSOCIATES$centralityAssociates
+qap_assoc[4,,] <- array_911_HIJACKERS_ASSOCIATES # connections/ties between terrorists. matrix with ties converted to array 
+qap_assoc[5,,] <- erMatr_assoc                            # generated Erdos-Renyi random graph
+```
+
+$H_0$ - there is no difference in the connections distribution between our network and random network generated by Erdos-Renyi random graph
+$H_1$ - there is difference in the connections distribution between our network and random network generated by Erdos-Renyi random graph
+
+```{r}
+set.seed(8)
+cugtest(dat = qap_assoc, FUN = sna::gcor, g1=4, g2=5, cmode = "density", gmode = "graph")
+```
+
+The p-value is greater than the significance level (normally accepted as 0.05), then we don't have sufficient evidence to reject null hypothesis and conclude 
+that the observed network has a different density distribution than the random graph.
+
+#### Quadratic Assignment Procedure (QAP) Hypothesis Tests
+
+The null hypothesis of the QAP test is that the observed graph-level statistic on graphs G_1,G_2,… was drawn from the distribution of said statistic evaluated (uniformly) on the set of all relabelings of G_1,G_2,…. Pragmatically, this test is performed by repeatedly (randomly) relabeling the input graphs, recalculating the test statistic, and then evaluating the fraction of draws greater than or equal to (and less than or equal to) the observed value. This accumulated fraction approximates the integral of the distribution of the test statistic over the set of unlabeled input graphs.
+
+##### QAP for prior contacts
+
+QAP of prior contacts Ties (flight #) and Las Vegas Meeting participation. 
+
+```{r qap_prior_ties_las_vegas, warning=FALSE}
+qap_prior_test <- qaptest(dat=qap_prior, FUN = sna::gcor, g1=1,g2=2)
+summary(qap_prior_test)
+plot(qap_prior_test)
+```
+
+QAP of prior contacts Ties (flight #) and computed centrality. 
+
+```{r qap_prior_ties_vs_centrality}
+qap_prior_test2 <- qaptest(dat=qap_prior, FUN = sna::gcor, g1=1,g2=3)
+summary(qap_prior_test2)
+plot(qap_prior_test2)
+```
+
+QAP of prior contacts Las Vegas Meeting and computed centrality. 
+
+```{r qap_prior_las_vegas_centrality}
+qap_prior_test3 <- qaptest(dat=qap_prior, FUN = sna::gcor, g1=2,g2=3)
+summary(qap_prior_test3)
+plot(qap_prior_test3)
+```
+
+##### QAP for associates
+
+```{r qap_array_associates}
+dim_len <- nrow(df_911_HIJACKERS_ATTR_ASSOCIATES)
+qap_associates <- array( dim = c(3,dim_len,dim_len) )
+qap_associates[1, , ] <- df_911_HIJACKERS_ATTR_ASSOCIATES$Ties
+qap_associates[2, , ] <- df_911_HIJACKERS_ATTR_ASSOCIATES$`Las Vegas Meeting`
+qap_associates[3, , ] <- df_911_HIJACKERS_ATTR_ASSOCIATES$centralityAssociates
+# view(gq)
+```
+
+QAP of associates Ties (flight #) and Las Vegas Meeting participation. 
+
+```{r qap_associates_ties_las_vegas, warning=FALSE}
+qap_associates_test <- qaptest(dat=qap_associates, FUN = sna::gcor, g1=1, g2=2)
+summary(qap_prior_test)
+plot(qap_prior_test)
+```
+
+QAP of associates Ties (flight #) and computed centrality. 
+
+```{r qap_associates_vs_centrality}
+qap_associates_test2 <- qaptest(dat=qap_associates, FUN = sna::gcor, g1=1,g2=3)
+summary(qap_associates_test2)
+plot(qap_associates_test2)
+```
+
+QAP of prior contacts Las Vegas Meeting and computed centrality. 
+
+```{r qap_associates_las_vegas_centrality}
+qap_associates_test3 <- qaptest(dat=qap_associates, FUN = sna::gcor, g1=2,g2=3)
+summary(qap_associates_test3)
+plot(qap_associates_test3)
+```
+
+
+
+
